@@ -1,0 +1,238 @@
+■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+■ サーバ構築方法
+
+FreeBSD/i386で検証しているが，おそらくDebianとかでもそのままいけると思われる．
+
+■ ファイル一式
+
+以下のファイルがある．
+
+・問題プログラム (hello.elf)
+  ＊起動するとスリープの無限ループに入るだけのプログラム
+  ＊H8マイコン向けに作成してある
+  ＊トラップ割込みとGDBスタブを実装しており，GDBでリモートデバッグできる
+  ＊GDBスタブは標準入出力を使うので，簡易inetd経由で起動することで
+    TCP/IP経由でリモートデバッグできる
+
+・H8シミュレータ
+  ＊上記の問題プログラムを動作させるために必要
+  ＊GDB付属のH8シミュレータに，いくつかの特殊対応を入れたものを使う
+
+・簡易inetd，簡易タイマ
+  ＊簡易inetdを利用することで，問題プログラムのGDBスタブにTCP/IPで接続して
+    リモートデバッグ可能にする
+  ＊簡易タイマを利用することで，長時間の接続を自動で切断する
+
+■ サーバの準備
+
+userというユーザ名で，/home/user をホームディレクトリにしてユーザ作成しておく．
+
+ファイル一式(seccon2016-online-gdb.zip)をホームディレクトリに展開しておく．
+
+$ cd ~
+$ unzip seccon2016-online-gdb.zip
+
+サーバプログラムがchrootして動作するので，chroot用のディレクトリを作成する．
+
+$ cd ~
+$ mkdir root
+$ mkdir root/bin
+$ mkdir root/lib
+$ mkdir root/libexec
+
+chrootして動作するために必要な共有ライブラリをコピーしておく．
+以下はFreeBSDの場合．
+
+$ cp /lib/libc.so.7 ~/root/lib
+$ cp /libexec/ld-elf.so.1 ~/root/libexec
+
+■ 問題プログラムのビルド
+
+(注意) hello.elf はビルド済みのものを添付するので，改めてビルドする必要は無い
+       以下はビルドするときのための説明．
+
+問題プログラムのソースコードは hello.zip というファイルにアーカイブしてある．
+
+以下の環境をインストールすることで，H8向けのクロスビルド環境を構築する．
+もしくは環境構築済みのＶＭイメージを利用する．
+
+(クロスビルド環境の構築用のスクリプト)
+http://kozos.jp/books/asm/
+「アセンブラ出力環境」→ cross-20130826.zip
+
+(上記環境を構築済みのＶＭイメージ)
+http://kozos.jp/books/asm/
+「環境構築済みのＶＭイメージ」→ cross-CentOS.ova
+
+上記環境で hello.zip を展開し，makeを実行することで hello.elf が生成される．
+
+■ 問題プログラムの準備
+
+添付の hello.elf を，~/root/bin にコピーしておく．
+
+$ cp ~/seccon2016-online-gdb/build/hello.elf ~/root/bin
+
+■ シミュレータのビルド
+
+gdb-7.12.tar.gzをダウンロードし，添付のパッチを当ててビルドする．
+
+(ビルド方法)
+$ cd ~
+$ wget -nd http://www2.kozos.jp/tools/gdb-7.12.tar.gz
+$ tar xvzf gdb-7.12.tar.gz
+$ patch -p0 < seccon2016-online-gdb/build/gdb-7.12-compile.c.patch
+$ cd gdb-7.12
+$ ./configure --target=h8300-elf --disable-werror --disable-nls
+$ make
+→ gdbとシミュレータがビルドされる．
+
+シミュレータは ~/root/bin にコピーしておく．
+$ cp sim/h8300/run ~/root/bin
+
+gdbはテスト用に使うので，ホームディレクトリにコピーしておく．
+$ cp gdb/gdb ~/
+
+なおGDBに当てるパッチには，以下の対応が入っている．これを当てないとhello.elfを
+正常に実行できない．
+
+・GDBスタブのソフトウェア・ブレークポイントの対応
+
+  ＊ソフトウェア・ブレークポイントのためにGDBスタブが命令書き換えが行うが，
+    シミュレータは命令コードをキャッシュしておりそのままだとキャッシュ更新
+    されず誤動作する．命令実行のたびにデコードしなおしてキャッシュ更新する．
+    (ただしこの対応のため実行速度が遅くなっている．本来なら書き換えた部分のみ
+     キャッシュ更新すべきだが，とりあえず確実に動作させるため，これで対応する)
+
+  ＊GDBがソフトウェア・ブレークポイントの埋め込み時にsleep命令を埋め込むが，
+    sleep命令がhaltになってしまっているのでそのままだと動作停止してしまう．
+    sleep命令をトラップ命令として扱い，トラップ例外を発生させてGDBスタブに
+    処理を渡しスタブの動作に移るように修正．
+
+・不要で，危険と思われるようなシステムコール・サービスの廃止
+  ＊SYS_CMDLINE → 用途不明だが危険そう？なので廃止
+  ＊SYS_WRITE   → 標準入出力以外への出力(ファイルへの出力)を廃止
+
+・長時間動作した場合の停止処理を追加
+
+・ソケット切断時の考慮(read()がゼロで返った場合に停止する)
+
+・rte命令/トラップ命令でのスタック上のＰＣとCCRの退避・復旧のバグを修正
+
+■ 簡易inetd，簡易タイマの準備
+
+簡易inetdと簡易タイマをビルドする．
+
+$ cd ~
+$ unzip seccon2016-online-gdb/build/simple-inetd.zip
+$ cd simple-inetd
+$ make
+$ cp simple-inetd ~/root/bin
+
+$ cd ~
+$ unzip seccon2016-online-gdb/build/timer-exec.zip
+$ cd timer-exec
+$ make
+$ cp timer-exec ~/root/bin
+
+■ フラグファイルの準備
+
+フラグファイルをchroot先にコピーしておく．
+
+$ cp ~/seccon2016-online-gdb/flag.txt ~/root
+
+■ サーバの起動テスト
+
+接続受け付けを行うので，安全のためにlocalhostからの接続のみ受け付けるようにして
+テストするが，可能ならばIPフィルタなどもかけておくべき．
+インターネット上にあるサーバなどでテストする際には注意すること．
+
+簡易inetdでの起動を確認する．
+
+$ cd ~/root
+$ ./bin/simple-inetd localhost 10000 0 0 . \
+          ./bin/run run --h8300h ./bin/hello.elf
+
+この状態で，telnetで10000ポートに接続し以下が返ってきたら動作ＯＫ．
+
+$ telnet localhost 10000
+$T05#b9
+
+GDBで接続できることを確認する．
+
+$ cd ~
+$ ./gdb
+(gdb) set architecture h8300h
+(gdb) target remote localhost:10000
+(gdb) info registers
+→ レジスタ値が取得できればＯＫ
+
+■ サーバ起動のスクリプトの準備
+
+サーバ起動用のスクリプトが添付してあるのでコピーする．
+
+$ cd ~
+$ cp seccon2016-online-gdb/build/testrun.sh ~
+$ cp seccon2016-online-gdb/build/run.sh ~
+$ chmod +x testrun.sh run.sh
+
+testrun.sh/run.sh内の以下のパラメータを調整する．
+
+ROOTDIR ... chroot()先のディレクトリ
+UID     ... setuid()先のユーザID
+GID     ... setgid()先のグループID
+
+■ 簡易タイマの起動を確認する
+
+testrun.sh を起動する．(localhostからの接続のみ受け付ける)
+
+$ cd ~
+$ su
+# cd /home/user
+# ./testrun.sh
+
+GDBで接続できることを確認する．
+
+$ cd ~
+$ ./gdb
+(gdb) set architecture h8300h
+(gdb) target remote localhost:10000
+(gdb) info registers
+→ レジスタ値が取得できればＯＫ
+
+うまく起動できない場合は，chrootした先で共有ライブラリが不足している可能性が
+ある．telnetで接続することで，応答を見て不明なライブラリを知ることができるので
+必要な共有ライブラリを探してコピーしておく．
+
+$ cp /lib/XXX ~/root/lib
+
+telnetで接続して，一定時間で自動切断されることを確認する．
+
+$ telnet localhost 10000
+→ しばらく待つと自動切断される．
+
+■ ファイルの削除・変更の防止
+
+ファイルの削除などの防止のために，chflagsでschgフラグを立てておく．
+
+(FreeBSDの場合)
+$ cd ~
+$ su
+# cd /home/user
+# chflags -R schg root
+→ root以下でファイル変更などできないことを確認する
+   (とくに，flag.txt が削除／ファイル名変更／追記できないことを確認する)
+
+■ 競技の開始
+
+IPフィルタの設定をしている場合は，ポート10000を開ける．
+
+localhostのみでなく任意のアドレスからの接続受け付けをするようにしてサーバを
+起動する．
+
+$ cd ~
+$ su
+# cd /home/user
+# ./run.sh
+
+外部からうまく接続できない場合は，まずIPフィルタの設定が残っていないかを
+調べること．

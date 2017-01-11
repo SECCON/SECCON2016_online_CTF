@@ -1,0 +1,23 @@
+Vagrant.configure(2) do |config|
+  config.vm.hostname = "biscuiti"
+  config.vm.box = "ubuntu/xenial64"
+  config.vm.provider "virtualbox" do |vb|
+    vb.customize [
+      "modifyvm", :id,
+      "--memory", "1024",
+      "--paravirtprovider", "kvm", # for linux guest
+      "--cpus", "2",
+      "--ioapic", "on",
+    ]
+  end
+  config.vm.network "forwarded_port", guest: 80, host: 10080
+  
+  config.vm.provision "shell", inline: <<-SHELL
+    sudo apt-get update
+  SHELL
+
+  config.vm.provider "virtualbox" do |vb|
+#    vb.customize ["modifyvm", :id, "--uart1", "off"]
+    vb.customize ["storagectl", :id, "--name", "SCSI", "--hostiocache", "on"]
+  end
+end

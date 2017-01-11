@@ -1,0 +1,5 @@
+Anti-Debugging
+Reverse it.
+
+bin (SHA1: 690c72681b1cd2bb9fe01efe0bfb71b44f7838d3)
+may some AV will alert,but no problem.

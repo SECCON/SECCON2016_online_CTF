@@ -1,0 +1,10 @@
+service alpha-complex-1
+{
+    socket_type     = stream
+    type            = UNLISTED
+    user            = alpha-complex-1
+    port            = 31337
+    server          = /home/alpha-complex-1/server.sh
+    wait            = no
+}
+

@@ -1,0 +1,5 @@
+my PC suddenly got broken. Could you help me to recover it please?
+
+NOTE: The disk can be virus-infected. DO NOT RUN any programs extracted from the disk outside of sandbox.
+
+attachment: disk.qcow2

@@ -1,0 +1,1 @@
+void decrypt(unsigned char* data, unsigned char *key);

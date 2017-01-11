@@ -1,0 +1,10 @@
+#Preliminaries
+sudo apt-get install build-essential python-pip socat
+sudo pip install keystone-engine
+
+#How to build
+cd build
+make files # save dist.tgz to ../files/
+
+#How to start
+sudo ./start_server.sh

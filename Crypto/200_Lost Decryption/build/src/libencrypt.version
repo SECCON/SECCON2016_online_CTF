@@ -1,0 +1,4 @@
+ENCRYPT {
+  global: encrypt;
+  local: *;
+};
